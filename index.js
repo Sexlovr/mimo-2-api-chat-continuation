@@ -25,6 +25,7 @@ import {
   contentToText, encodeMarker, genMarkerId, genSessionId,
   stripMarkers, findContinuationParent
 } from './lib/markers.js';
+import { uploadFile, fireFileTurn, FILE_CHUNK_CHARS } from './lib/fileUpload.js';
 import { buildAdminPage } from './lib/page.js';
 
 var __filename = fileURLToPath(import.meta.url);
@@ -539,33 +540,50 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
           query = total;
           console.log('[MiMo] Birth conv=' + mimoConversationId.slice(0, 8) + ' ~' + Math.round(total.length / 4000) + 'k tok');
         } else {
+          // ── File-priming birth ──
+          // Split the context into <=FILE_CHUNK_CHARS pieces (one file per turn:
+          // files in one message SHARE the ~102.4k ingestion cap), upload ALL
+          // in parallel (no model involved), then fire the priming turns
+          // back-to-back — history is committed per-request, so we don't wait
+          // for the ack streams. The final real query rides its OWN ~100k-char
+          // budget on top of the loaded files.
           var lastUserIdx = -1;
           for (var i = cleanedMessages.length - 1; i >= 0; i--) {
             if (cleanedMessages[i].role === 'user') { lastUserIdx = i; break; }
           }
           var priorText = dumpMessages(cleanedMessages.slice(0, lastUserIdx));
           var finalText = dumpMessages(cleanedMessages.slice(lastUserIdx));
-          var silentChunks = splitIntoChunks(priorText, CHUNK_CHARS);
-          var finalChunks = splitIntoChunks(finalText, CHUNK_CHARS);
+          var fileChunks = splitIntoChunks(priorText, FILE_CHUNK_CHARS);
+          var finalChunks = splitIntoChunks(finalText, FILE_CHUNK_CHARS);
           if (finalChunks.length === 0) finalChunks = [''];
           var streamedPrompt = finalChunks.pop();
-          silentChunks = silentChunks.concat(finalChunks);
-          var totalParts = silentChunks.length + 1;
-          console.log('[MiMo] Birth+prime conv=' + mimoConversationId.slice(0, 8) + ' ' + silentChunks.length + ' silent + 1 streamed (~' + Math.round(total.length / 4000) + 'k tok)');
+          // Any final-text overflow beyond one query budget also becomes a file.
+          fileChunks = fileChunks.concat(finalChunks);
+          console.log('[MiMo] Birth+fileprime conv=' + mimoConversationId.slice(0, 8) + ' ' + fileChunks.length + ' files + 1 query (~' + Math.round(total.length / 4000) + 'k tok)');
 
           var primedOk = true;
-          for (var ci = 0; ci < silentChunks.length; ci++) {
+          if (fileChunks.length) {
             try {
-              await sendSilentMiMoTurn(account, mimoConversationId, silentChunks[ci], phEncoded, abortController.signal);
+              // 1) parallel uploads (pure storage, no model)
+              var tU = Date.now();
+              var mms = await Promise.all(fileChunks.map(function (chunk, idx) {
+                return uploadFile(account, chunk, phEncoded, 'ctx-part-' + (idx + 1));
+              }));
+              console.log('[MiMo] Uploaded ' + mms.length + ' files in ' + ((Date.now() - tU) / 1000).toFixed(1) + 's');
+
+              // 2) pipelined turns — fire each, confirm acceptance, don't wait
+              for (var ci = 0; ci < mms.length; ci++) {
+                var fired = await fireFileTurn(account, mimoConversationId, mms[ci], phEncoded, requestedModel, abortController.signal);
+                console.log('[MiMo] File turn ' + (ci + 1) + '/' + mms.length + ' accepted (+' + fired.toFixed(1) + 's)');
+              }
+
+              query = 'All reference documents have been filed with you in this conversation. Resume normal behavior and respond to the latest user message:\n\n' + streamedPrompt;
             } catch (primeErr) {
-              console.error('[MiMo] Silent turn ' + (ci+1) + '/' + silentChunks.length + ' failed: ' + primeErr.message + ' — skipping remaining chunks');
+              console.error('[MiMo] File-priming failed: ' + primeErr.message + ' — falling back to direct query');
               primedOk = false;
-              break;
             }
           }
-          if (primedOk && silentChunks.length) {
-            query = 'All ' + totalParts + ' parts buffered. Resume normal behavior and respond to the latest user message:\n\n' + streamedPrompt;
-          } else {
+          if (!primedOk) {
             // Priming failed (likely 451 content filter) — send just the final query directly
             query = streamedPrompt;
           }

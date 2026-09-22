@@ -6,12 +6,12 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.8.3",
+    "better-sqlite3": "^12.2.0",
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2"
   },
   "allowScripts": {
-    "better-sqlite3@11.10.0": true
+    "better-sqlite3@12": true
   }
 }

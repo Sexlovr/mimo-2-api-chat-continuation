@@ -6,3 +6,12 @@ node_modules/
 data/
 captures/tools/*.png
 captures/tools/*.jsonl
+captures/cookies-*.json
+captures/all-cookies-*.json
+captures/chrome-profile/
+captures/net/
+captures/shots/
+captures/testfiles/
+captures/e2e-stage1.json
+captures/import-curl.txt
+server.log
