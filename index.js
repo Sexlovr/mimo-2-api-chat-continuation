@@ -26,6 +26,7 @@ import {
   stripMarkers, findContinuationParent
 } from './lib/markers.js';
 import { uploadFile, fireFileTurn, FILE_CHUNK_CHARS } from './lib/fileUpload.js';
+import { navigate, shot, clickAt, typeText, pressKey, extractCookies, autoFillLogin } from './lib/browserLogin.js';
 import { buildAdminPage } from './lib/page.js';
 
 var __filename = fileURLToPath(import.meta.url);
@@ -307,6 +308,69 @@ app.post('/admin/accounts/autologin', adminAuth, async function (req, res) {
   } catch (e) {
     return res.status(500).json({ error: 'autologin failed: ' + e.message });
   }
+});
+
+// ── Screenshot-based browser login (dpsk2api v3 style — NO VNC) ──
+// The admin sees live JPEG frames of a headless chromium and drives it via
+// click/type/key relay. Works with ANY login variant (email code, Google, QR)
+// because the human completes whatever the page shows.
+app.post('/admin/browser/start', adminAuth, async function (req, res) {
+  try {
+    var url = req.body.url || 'https://account.xiaomi.com/fe/service/login/password';
+    await navigate(url);
+    res.json({ message: 'browser ready', url: url });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/browser/fill', adminAuth, async function (req, res) {
+  try {
+    var r = await autoFillLogin(req.body.email, req.body.password);
+    res.json({ message: 'credentials typed — review the screenshot and click Sign in', checkbox: r.checkbox });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/admin/browser/shot', adminAuth, async function (req, res) {
+  try { res.json(await shot()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/browser/click', adminAuth, async function (req, res) {
+  try { await clickAt(req.body.x, req.body.y); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/browser/type', adminAuth, async function (req, res) {
+  try { await typeText(req.body.text); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/browser/key', adminAuth, async function (req, res) {
+  try { await pressKey(req.body.key); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/admin/browser/goto', adminAuth, async function (req, res) {
+  try { await navigate(req.body.url); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Reads .xiaomimimo.com cookies from the live browser; when complete, upserts
+// the account into the DB so the proxy starts using it immediately.
+app.get('/admin/browser/cookies', adminAuth, async function (req, res) {
+  try {
+    var r = await extractCookies();
+    if (!r.complete) return res.json(r);
+    var existing = getDB().prepare('SELECT id FROM accounts WHERE user_id = ?').get(r.cookies.userId);
+    if (existing) {
+      getDB().prepare('UPDATE accounts SET service_token = ?, ph_token = ?, active = 1 WHERE id = ?')
+        .run(r.cookies.serviceToken, r.cookies.phToken, existing.id);
+      return res.json({ message: 'Account refreshed', id: existing.id, userId: r.cookies.userId, complete: true });
+    }
+    var label = req.query.label || ('browser:' + r.cookies.userId);
+    var ins = getDB().prepare('INSERT INTO accounts (label, service_token, user_id, ph_token) VALUES (?, ?, ?, ?)')
+      .run(label, r.cookies.serviceToken, r.cookies.userId, r.cookies.phToken);
+    res.json({ message: 'Account saved', id: ins.lastInsertRowid, userId: r.cookies.userId, complete: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/admin/accounts/:id', adminAuth, function (req, res) {
