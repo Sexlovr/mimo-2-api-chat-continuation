@@ -568,92 +568,63 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
     };
 
     var query, mimoConversationId, mimoMsgId = generateMsgId();
-    var proCtx = null;
 
     // ════════════════════════════════════════
-    //  ALL MODELS: marker-based native continuation
-    //  (MiMo has no flash-like stateless model — both need continuation)
+    //  STATELESS mode: EVERY request is a full file-priming birth.
+    //  Fresh conversationId each time, entire flattened history loaded via
+    //  files + final query, no marker tracking, no server-side session reuse.
+    //  (A/B experiment branch vs file-priming's marker continuation.)
     // ════════════════════════════════════════
     {
-      var cp = findContinuationParent(cleanedMessages);
+      mimoConversationId = generateConversationId();
+      var total = dumpMessages(cleanedMessages);
 
-      if (cp) {
-        var row = getMessageByMarker(apiKeyHash, cp.markerId);
-        if (row) {
-          mimoConversationId = row.mimo_conversation_id;
-          if (systemText && row.system_hash !== systemHash) {
-            var upd = '[updated system instructions — the user revised the system prompt; honor the following from now on]\n' + systemText + '\n[end updated system instructions]';
-            await sendSilentMiMoTurn(account, mimoConversationId, upd, phEncoded, abortController.signal);
-            console.log('[Pro] [updated info] injected into conv=' + mimoConversationId.slice(0, 8));
-          }
-          query = stripMarkers(cp.userText);
-          mimoMsgId = generateMsgId();
-          proCtx = { apiKeyHash, systemHash };
-          console.log('[MiMo] Continue conv=' + mimoConversationId.slice(0, 8) + ' marker=' + cp.markerId.slice(0, 8));
-        } else {
-          console.log('[MiMo] marker ' + cp.markerId.slice(0, 8) + ' not found -> re-birth');
-          cp = null;
+      if (total.length <= MAX_PRO_BIRTH) {
+        query = total;
+        console.log('[MiMo] Stateless direct conv=' + mimoConversationId.slice(0, 8) + ' ~' + Math.round(total.length / 4000) + 'k tok');
+      } else {
+        // ── File-priming birth (full history every request) ──
+        // One file per turn (files in one message SHARE the ~102.4k ingestion
+        // cap), parallel uploads (no model), pipelined turn firing (history is
+        // committed per-request server-side), final query rides its own
+        // ~100k-char budget on top of the loaded files.
+        var lastUserIdx = -1;
+        for (var i = cleanedMessages.length - 1; i >= 0; i--) {
+          if (cleanedMessages[i].role === 'user') { lastUserIdx = i; break; }
         }
-      }
+        var priorText = dumpMessages(cleanedMessages.slice(0, lastUserIdx));
+        var finalText = dumpMessages(cleanedMessages.slice(lastUserIdx));
+        var fileChunks = splitIntoChunks(priorText, FILE_CHUNK_CHARS);
+        var finalChunks = splitIntoChunks(finalText, FILE_CHUNK_CHARS);
+        if (finalChunks.length === 0) finalChunks = [''];
+        var streamedPrompt = finalChunks.pop();
+        fileChunks = fileChunks.concat(finalChunks);
+        console.log('[MiMo] Stateless+fileprime conv=' + mimoConversationId.slice(0, 8) + ' ' + fileChunks.length + ' files + 1 query (~' + Math.round(total.length / 4000) + 'k tok)');
 
-      if (!cp) {
-        mimoConversationId = generateConversationId();
-        var total = dumpMessages(cleanedMessages);
+        var primedOk = true;
+        if (fileChunks.length) {
+          try {
+            var tU = Date.now();
+            var mms = await Promise.all(fileChunks.map(function (chunk, idx) {
+              return uploadFile(account, chunk, phEncoded, 'ctx-part-' + (idx + 1));
+            }));
+            console.log('[MiMo] Uploaded ' + mms.length + ' files in ' + ((Date.now() - tU) / 1000).toFixed(1) + 's');
 
-        if (total.length <= MAX_PRO_BIRTH) {
-          query = total;
-          console.log('[MiMo] Birth conv=' + mimoConversationId.slice(0, 8) + ' ~' + Math.round(total.length / 4000) + 'k tok');
-        } else {
-          // ── File-priming birth ──
-          // Split the context into <=FILE_CHUNK_CHARS pieces (one file per turn:
-          // files in one message SHARE the ~102.4k ingestion cap), upload ALL
-          // in parallel (no model involved), then fire the priming turns
-          // back-to-back — history is committed per-request, so we don't wait
-          // for the ack streams. The final real query rides its OWN ~100k-char
-          // budget on top of the loaded files.
-          var lastUserIdx = -1;
-          for (var i = cleanedMessages.length - 1; i >= 0; i--) {
-            if (cleanedMessages[i].role === 'user') { lastUserIdx = i; break; }
-          }
-          var priorText = dumpMessages(cleanedMessages.slice(0, lastUserIdx));
-          var finalText = dumpMessages(cleanedMessages.slice(lastUserIdx));
-          var fileChunks = splitIntoChunks(priorText, FILE_CHUNK_CHARS);
-          var finalChunks = splitIntoChunks(finalText, FILE_CHUNK_CHARS);
-          if (finalChunks.length === 0) finalChunks = [''];
-          var streamedPrompt = finalChunks.pop();
-          // Any final-text overflow beyond one query budget also becomes a file.
-          fileChunks = fileChunks.concat(finalChunks);
-          console.log('[MiMo] Birth+fileprime conv=' + mimoConversationId.slice(0, 8) + ' ' + fileChunks.length + ' files + 1 query (~' + Math.round(total.length / 4000) + 'k tok)');
-
-          var primedOk = true;
-          if (fileChunks.length) {
-            try {
-              // 1) parallel uploads (pure storage, no model)
-              var tU = Date.now();
-              var mms = await Promise.all(fileChunks.map(function (chunk, idx) {
-                return uploadFile(account, chunk, phEncoded, 'ctx-part-' + (idx + 1));
-              }));
-              console.log('[MiMo] Uploaded ' + mms.length + ' files in ' + ((Date.now() - tU) / 1000).toFixed(1) + 's');
-
-              // 2) pipelined turns — fire each, confirm acceptance, don't wait
-              for (var ci = 0; ci < mms.length; ci++) {
-                var fired = await fireFileTurn(account, mimoConversationId, mms[ci], phEncoded, requestedModel, abortController.signal);
-                console.log('[MiMo] File turn ' + (ci + 1) + '/' + mms.length + ' accepted (+' + fired.toFixed(1) + 's)');
-              }
-
-              query = 'All reference documents have been filed with you in this conversation. Resume normal behavior and respond to the latest user message:\n\n' + streamedPrompt;
-            } catch (primeErr) {
-              console.error('[MiMo] File-priming failed: ' + primeErr.message + ' — falling back to direct query');
-              primedOk = false;
+            for (var ci = 0; ci < mms.length; ci++) {
+              var fired = await fireFileTurn(account, mimoConversationId, mms[ci], phEncoded, requestedModel, abortController.signal);
+              console.log('[MiMo] File turn ' + (ci + 1) + '/' + mms.length + ' accepted (+' + fired.toFixed(1) + 's)');
             }
+
+            query = 'All reference documents have been filed with you in this conversation. Resume normal behavior and respond to the latest user message:\n\n' + streamedPrompt;
+          } catch (primeErr) {
+            console.error('[MiMo] File-priming failed: ' + primeErr.message + ' — falling back to direct query');
+            primedOk = false;
           }
-          if (!primedOk) {
-            // Priming failed (likely 451 content filter) — send just the final query directly
-            query = streamedPrompt;
-          }
-          mimoMsgId = generateMsgId();
         }
-        proCtx = { apiKeyHash, systemHash };
+        if (!primedOk) {
+          query = streamedPrompt;
+        }
+        mimoMsgId = generateMsgId();
       }
     }
 
@@ -680,7 +651,7 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
     }
 
     // Debug header
-    res.setHeader('X-Debug-ProCtx', proCtx ? '1' : '0');
+    res.setHeader('X-Debug-Mode', 'stateless');
     res.setHeader('X-Debug-ConvId', (mimoConversationId || '').slice(0, 12));
 
     if (stream) {
@@ -724,22 +695,6 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
         console.error('[Stream Error]', streamErr.message);
       }
 
-      // ── Stamp marker for pro continuation ──
-      if (proCtx) {
-        try {
-          var markerId = genMarkerId();
-          storeMessageMarker({
-            markerId, apiKeyHash: proCtx.apiKeyHash,
-            mimoConversationId: mimoConversationId,
-            systemHash: proCtx.systemHash, model: requestedModel
-          });
-          var marker = encodeMarker(markerId);
-          res.write(buildOpenAIChunk(completionId, requestedModel, { content: marker }, null, null));
-        } catch (e) {
-          console.error('[Marker Store Error (stream)]', e.message);
-        }
-      }
-
       res.write(buildOpenAIChunk(completionId, requestedModel, {}, 'stop', usageData));
       res.write('data: [DONE]\n\n');
       res.end();
@@ -772,21 +727,6 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
       }
 
       var rawResultText = allContent.join('');
-
-      // ── Stamp marker for pro continuation ──
-      if (proCtx) {
-        try {
-          var markerId2 = genMarkerId();
-          storeMessageMarker({
-            markerId: markerId2, apiKeyHash: proCtx.apiKeyHash,
-            mimoConversationId: mimoConversationId,
-            systemHash: proCtx.systemHash, model: requestedModel
-          });
-          rawResultText += encodeMarker(markerId2);
-        } catch (e) {
-          console.error('[Marker Store Error]', e.message);
-        }
-      }
 
       var result = buildOpenAIResponse(
         completionId, requestedModel,
