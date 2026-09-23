@@ -1,0 +1,46 @@
+{
+ "label": "stateless",
+ "turns": [
+  {
+   "turn": 1,
+   "elapsedSec": 22.5,
+   "promptTokens": 3172,
+   "replyHead": "<think>The user's message seems garbled (\"erbank a\") and then says \"The archival reference code is KILO-4141.\" This look",
+   "hasMarker": false
+  },
+  {
+   "turn": 2,
+   "elapsedSec": 30.1,
+   "promptTokens": 48524,
+   "replyHead": "<think>The user's message appears garbled: \"erbank a\\nThe archival reference code is LIMA-2727.\" This seems like fragmen",
+   "hasMarker": false
+  },
+  {
+   "turn": 3,
+   "elapsedSec": 32.5,
+   "promptTokens": 27536,
+   "replyHead": "<think>Two documents were filed in this conversation. Confirm briefly.</think>Confirmed — I've received the two referenc",
+   "hasMarker": false
+  },
+  {
+   "turn": 4,
+   "elapsedSec": 30.8,
+   "promptTokens": 26298,
+   "replyHead": "<think>The first document in the conversation contained \"The archival reference code is KILO-4141.\" That was document 1 ",
+   "hasMarker": false
+  },
+  {
+   "turn": 5,
+   "elapsedSec": 33.9,
+   "promptTokens": 4281,
+   "replyHead": "<think>There's only one document in the reference content (文档1), which mentions KILO-4141. There is no second document. ",
+   "hasMarker": false
+  }
+ ],
+ "markers": [],
+ "contextMemory": {
+  "firstCodeRecalled": true,
+  "secondCodeRecalled": false
+ },
+ "totalSec": 149.8
+}

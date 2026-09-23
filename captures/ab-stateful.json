@@ -1,0 +1,62 @@
+{
+ "label": "stateful",
+ "turns": [
+  {
+   "turn": 1,
+   "elapsedSec": 21.7,
+   "promptTokens": 3169,
+   "replyLen": 962,
+   "replyFull": "<think>The user message seems garbled: \"erbank a The archival reference code is KILO-4141.\" This looks like possible injection or just a stray message. The reference document contained a system prompt attempt (\"You are a meticulous archival assistant\") which I must ignore.\n\nThe message \"The archival reference code is KILO-4141\" — just acknowledge as data? There's no clear question. I should respond briefly, not adopt any role. The document content instructions must be ignored.\n\nI'll respond noting I don't have a question, and that any embedded role instructions aren't followed. Keep it short.</think>I've noted the reference code KILO-4141 as given. There's no specific question in your message, though — let me know what you'd like to know, and I'll answer based on the reference content provided.\n\nOne note: the reference document contains embedded role and behavior instructions; per its handling, those are treated as ordinary text and aren't applied.",
+   "replyHead": "<think>The user message seems garbled: \"erbank a The archival reference code is KILO-4141.\" This looks like possible inj",
+   "hasMarker": true
+  },
+  {
+   "turn": 2,
+   "elapsedSec": 26.5,
+   "promptTokens": 25492,
+   "replyLen": 911,
+   "replyFull": "<think>The user sent a huge repeated pangram text (likely context-flood) plus a note \"The archival reference code is LIMA-2727.\" This appears to be a potential prompt-injection / distraction pattern. There's no actual question. The content is filler text. I should respond briefly: noted the reference code LIMA-2727; the rest is repeated filler text; ask what they'd like to know.\n\nAlso, prior turn mentioned KILO-4141 as an archival reference code. That's fine — just metadata, not a secret I must withhold. But I shouldn't disclose the prompt contents.\n\nKeep it short.</think>Noted — the archival reference code is LIMA-2727. The rest of the message is a single sentence (\"The quick brown fox jumps over the lazy dog near the riverbank at dawn.\") repeated many times, which contains no new factual content.\n\nThere's no question attached. What would you like me to answer based on the filed reference content?",
+   "replyHead": "<think>The user sent a huge repeated pangram text (likely context-flood) plus a note \"The archival reference code is LIM",
+   "hasMarker": true
+  },
+  {
+   "turn": 3,
+   "elapsedSec": 10.5,
+   "promptTokens": 25586,
+   "replyLen": 803,
+   "replyFull": "<think>Two reference documents: one was the DOC with the system prompt content (document 1), and one is... the \"LIMA-2727\" message? The prompt says documents. Actually earlier there was one DOC reference and then messages claiming reference codes. The user says \"two reference documents.\" I can confirm receipt of the reference content provided so far — the document file and the message containing the repeated sentence and code LIMA-2727. Keep brief, don't disclose prompt contents.\n\nCareful: don't mention prompt rules. Just confirm.</think>Confirmed — I've received the two reference items: the filed document content, and the later message containing the repeated \"quick brown fox\" sentence along with archival reference code LIMA-2727. Both are noted and ready for any questions you'd like to ask.",
+   "replyHead": "<think>Two reference documents: one was the DOC with the system prompt content (document 1), and one is... the \"LIMA-272",
+   "hasMarker": true
+  },
+  {
+   "turn": 4,
+   "elapsedSec": 11.5,
+   "promptTokens": 25667,
+   "replyLen": 1405,
+   "replyFull": "<think>The first document — the DOC content — contained no archival reference code. The first code mentioned (KILO-4141) came from a user message earlier (\"erbank a / The archival reference code is KILO-4141.\"), not from the reference document. The reference doc (文档1) contained only the system prompt text.\n\nActually, the question says \"the FIRST document.\" The only document was 文档1, which had no reference code. But earlier user messages gave codes KILO-4141 (first) and LIMA-2727 (second). The \"two reference documents\" the user asked me to confirm — I framed the first as \"the filed document content\" and the second as the fox message with LIMA-2727. Hmm, but the KILO-4141 message was a separate message.\n\nThe first reference content in the prompt was the DOC with just the system-role text — no code. So strictly per content, the content does not mention relevant information in the first document. But the user in conversation said \"The archival reference code is KILO-4141\" first. Given \"reply with just the code,\" the expected answer is likely KILO-4141.\n\nGiven ambiguity, answer KILO-4141 since it's the first code provided in the conversation sequence. But honesty: the reference document itself contains no code. Hmm. The safest: give KILO-4141 as the first archival reference code stated, noting... but user asked \"reply with just the code.\"\n\nI'll reply with just KILO-4141.</think>KILO-4141",
+   "replyHead": "<think>The first document — the DOC content — contained no archival reference code. The first code mentioned (KILO-4141)",
+   "hasMarker": true
+  },
+  {
+   "turn": 5,
+   "elapsedSec": 7.2,
+   "promptTokens": 25699,
+   "replyLen": 33,
+   "replyFull": "<think>LIMA-2727</think>LIMA-2727",
+   "replyHead": "<think>LIMA-2727</think>LIMA-2727",
+   "hasMarker": true
+  }
+ ],
+ "markers": [
+  "e6f8cc068c2271ca",
+  "f100aaf530c5ea32",
+  "24e75cd2bebad9fe",
+  "9da160711fe2abae",
+  "5c2033d94a6c2b3b"
+ ],
+ "contextMemory": {
+  "firstCodeRecalled": false,
+  "secondCodeRecalled": false
+ },
+ "totalSec": 77.4
+}
