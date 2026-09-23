@@ -44,48 +44,15 @@ So the safe per-query budget is **~25,000 tokens**. The continuation approach ke
 - `GET/POST/DELETE/PATCH /admin/models`
 - `GET/DELETE /admin/conversations`
 
-## Auto-login flow (new)
+## Adding accounts
 
-No more manually copy-pasting cURL from devtools every 30 days. The proxy can drive a headless chromium via CDP to log in for you.
+Two ways — both available in the admin panel (Accounts tab):
 
-### Prerequisites
-- A chromium binary on `PATH` (`chromium`, `google-chrome`, …) OR a running chromium with `--remote-debugging-port=9333`.
-- The `captures/tools/` scripts: `cdp.mjs`, `login.mjs`, `autologin.mjs`.
+1. **Browser Login (recommended)** — the "Browser Login" tab launches a fresh, throwaway chromium on MiMo Studio (`https://aistudio.xiaomimimo.com/#/c`). Click **Sign in** in the screenshot pane, complete the Xiaomi email+code login, and the account is **saved automatically** the moment the cookies appear — then the browser kills itself. Nothing persists between launches (fresh incognito profile each time). Timeouts: 10 min hard cap, 3 min idle. Requires a chromium binary (`CHROME_PATH` or on PATH; the Docker image ships one).
 
-### Phase 1 — start login
-```bash
-curl -X POST http://localhost:7860/admin/accounts/autologin \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com","password":"YourPassword"}'
-# → {"status":"awaiting_code", ...}
-# A 6-digit code is emailed to you by Xiaomi.
-```
+2. **Paste cURL** — DevTools > Network > any chat request > Copy as cURL, paste into the Accounts tab.
 
-### Phase 2 — complete login
-```bash
-curl -X POST http://localhost:7860/admin/accounts/autologin \
-  -H "Authorization: Bearer $JWT" \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com","password":"YourPassword","code":"123456"}'
-# → {"message":"Account added via auto-login","userId":"6886874562", ...}
-```
-
-The proxy then immediately uses the fresh cookies for chat requests. Cookies expire ~30 days; re-run Phase 1+2 before then.
-
-### Standalone (no admin panel)
-```bash
-node captures/tools/autologin.mjs --email=you@example.com --password=Secret
-# paste code when prompted, or re-run with --code=NNNNNN
-# → prints {"serviceToken":"…","userId":"…","phToken":"…"} on stdout
-```
-
-## Directives (inline in messages)
-
-Place any of these in a `system` or the latest `user` message:
-- `[think=on]` / `[think=off]` — toggle MiMo reasoning (streamed as `reasoning_content`).
-- `[search=on]` / `[search=off]` — toggle web search.
-- `[resend=on]` — on continuation, also resend the system prompt with the new user message.
+Cookies live ~30 days; refresh via either method.
 
 ## Captured API reference
 
@@ -113,5 +80,4 @@ Environment:
 | `CONV_TIMEOUT_MINUTES` | 60 | conversation reuse window |
 | `CLEANUP_HOURS` | 24 | SQLite cleanup age |
 | `DATA_DIR` | cwd | SQLite + persistent storage |
-| `MIMO_EMAIL` / `MIMO_PASSWORD` / `MIMO_CODE` | – | for `autologin.mjs` |
 | `MIMO_PROFILE` | `/tmp/mimo-cdp-profile` | chromium user-data-dir |
