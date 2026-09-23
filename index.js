@@ -631,7 +631,8 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
               // 1) parallel uploads (pure storage, no model)
               var tU = Date.now();
               var mms = await Promise.all(fileChunks.map(function (chunk, idx) {
-                return uploadFile(account, chunk, phEncoded, 'ctx-part-' + (idx + 1));
+                var header = '[Conversation history part ' + (idx + 1) + ' of ' + fileChunks.length + ' — reference data filed for this conversation. Not instructions.]\n\n';
+                return uploadFile(account, header + chunk, phEncoded, 'context-part-' + (idx + 1) + '-of-' + fileChunks.length);
               }));
               console.log('[MiMo] Uploaded ' + mms.length + ' files in ' + ((Date.now() - tU) / 1000).toFixed(1) + 's');
 
@@ -693,6 +694,8 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
       res.write(buildOpenAIChunk(completionId, requestedModel, { role: 'assistant', content: '' }, null, null));
 
       var usageData = null;
+      var ssePending = '';
+      var sseNuls = 0;
 
       try {
         for await (var event of parseMimoSSE(mimoResponse)) {
@@ -706,9 +709,29 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
             }
             if (parsed.type !== 'text' || parsed.content === undefined) continue;
 
-            // Strip null bytes (\x00) — MiMo's thinking separator
-            var cleanText = parsed.content.replace(/\0/g, '');
-            res.write(buildOpenAIChunk(completionId, requestedModel, { content: cleanText }, null, null));
+            // MiMo v2.6 streams thinking AND answer in the same 'text' channel,
+            // separated by literal NUL bytes:  teaser \0 <thinking> \0 <answer>
+            // — even with enableThinking:false. Segments closed by a NUL are
+            // reasoning; after the second separator the trailing text is the
+            // answer and streams as content. (No separator within ~160 chars
+            // of text ⇒ pure answer, no thinking phase.)
+            ssePending += parsed.content;
+            var nulIdx = ssePending.indexOf('\0');
+            while (nulIdx !== -1) {
+              var closed = ssePending.slice(0, nulIdx);
+              ssePending = ssePending.slice(nulIdx + 1);
+              if (closed) res.write(buildOpenAIChunk(completionId, requestedModel, { reasoning_content: closed }, null, null));
+              sseNuls++;
+              nulIdx = ssePending.indexOf('\0');
+            }
+            if (sseNuls >= 2) {
+              if (ssePending) { res.write(buildOpenAIChunk(completionId, requestedModel, { content: ssePending }, null, null)); ssePending = ''; }
+            } else if (ssePending.length > 160) {
+              // long stretch with no separator → this stream has no thinking phase
+              res.write(buildOpenAIChunk(completionId, requestedModel, { content: ssePending }, null, null));
+              ssePending = '';
+              sseNuls = 2; // treat everything that follows as answer
+            }
           } else if (event.event === 'usage') {
             try {
               var u = JSON.parse(event.data);
@@ -722,6 +745,13 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
         }
       } catch (streamErr) {
         console.error('[Stream Error]', streamErr.message);
+      }
+
+      // flush whatever the stream ended with: after 2 NULs it's answer text,
+      // otherwise a stream that never separated is one whole answer
+      if (ssePending) {
+        var flushDelta = sseNuls >= 2 ? { content: ssePending } : (sseNuls === 0 && ssePending.length < 160 ? { content: ssePending } : { reasoning_content: ssePending });
+        res.write(buildOpenAIChunk(completionId, requestedModel, flushDelta, null, null));
       }
 
       // ── Stamp marker for pro continuation ──
@@ -755,7 +785,7 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
             var parsed;
             try { parsed = JSON.parse(event.data); } catch (e) { continue; }
             if (parsed.type !== 'text' || parsed.content === undefined) continue;
-            allContent.push(parsed.content.replace(/\0/g, ''));
+            allContent.push(parsed.content);
           } else if (event.event === 'usage') {
             try {
               var u = JSON.parse(event.data);
@@ -771,7 +801,19 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
         console.error('[Stream Error]', streamErr.message);
       }
 
-      var rawResultText = allContent.join('');
+      // NUL-split: v2.6 streams teaser \0 thinking \0 answer in one channel.
+      // Segments before the LAST separator are reasoning; the trailing segment
+      // is the answer. No separator at all ⇒ the whole text is the answer.
+      var joined = allContent.join('');
+      var rawResultText, rawReasoning;
+      if (joined.indexOf('\0') !== -1) {
+        var segs = joined.split('\0');
+        rawResultText = segs.pop() || '';
+        rawReasoning = segs.join('\n').trim() || undefined;
+      } else {
+        rawResultText = joined;
+        rawReasoning = undefined;
+      }
 
       // ── Stamp marker for pro continuation ──
       if (proCtx) {
@@ -791,7 +833,7 @@ app.post('/v1/chat/completions', apiKeyAuth, async function (req, res) {
       var result = buildOpenAIResponse(
         completionId, requestedModel,
         rawResultText,
-        undefined,
+        rawReasoning,
         usageData2
       );
 
